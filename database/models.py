@@ -30,17 +30,17 @@ class Contract(Base):
     title = Column(String(126), nullable=False, comment="Title of the contract")
 
     region_id             = Column(BigInteger, nullable=False, comment="An EVE region id")
-    issuer_id             = Column(Integer,    nullable=False, comment="Character ID for the issuer")
-    issuer_corporation_id = Column(Integer,    nullable=False, comment="Character's corporation ID for the issuer")
+    issuer_id             = Column(BigInteger, nullable=False, comment="Character ID for the issuer")
+    issuer_corporation_id = Column(BigInteger, nullable=False, comment="Character's corporation ID for the issuer")
 
     # Dates
-    date_issued      = Column(DateTime, nullable=False, comment="Creation date of the contract")
-    date_expired     = Column(DateTime, nullable=False, comment="Expiration date of the contract")
-    days_to_complete = Column(Integer,  nullable=False, comment="Number of days to perform the contract")
+    date_issued      = Column(DateTime,   nullable=False, comment="Creation date of the contract")
+    date_expired     = Column(DateTime,   nullable=False, comment="Expiration date of the contract")
+    days_to_complete = Column(BigInteger, nullable=False, comment="Number of days to perform the contract")
 
     # Couriers contracts data
-    start_location_id = Column(Integer, nullable=False, comment="Start location ID (for Couriers contract)")
-    end_location_id   = Column(Integer, nullable=False, comment="End location ID (for Couriers contract)")
+    start_location_id = Column(BigInteger, nullable=False, comment="Start location ID (for Couriers contract)")
+    end_location_id   = Column(BigInteger, nullable=False, comment="End location ID (for Couriers contract)")
 
     collateral        = Column(Numeric(18, 2), nullable=False, comment="Collateral price (for Couriers only)")
     reward            = Column(Numeric(18, 2), nullable=False, comment="Remuneration for contract (for Couriers only)")
