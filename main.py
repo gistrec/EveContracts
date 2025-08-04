@@ -2,12 +2,10 @@ import time
 import logging
 from datetime import datetime, timezone
 
-from api import fetch_public_contracts  # returns (contracts_list, total_pages)
-from database.queries.contracts import (
-    get_existing_contracts_by_region,
-    upsert_contracts,
-    delete_missing_contracts,
-)
+from api import fetch_public_contracts
+from utils.metrics import ExecutionTimer
+from database.queries.contracts import get_existing_contracts_by_region, upsert_contracts, delete_missing_contracts
+
 
 # Constants
 TRADE_REGIONS = {
@@ -53,7 +51,6 @@ def normalize_contract_basic(contract: dict, region_id: int, now: datetime):
         # created_at/updated_at will be set by the DB defaults, so omit them here
     }
 
-
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     region_name = "Jita"
@@ -63,60 +60,85 @@ def main():
         now = datetime.now(timezone.utc)
         logging.info(f"[{region_name}] Starting sync at {now.isoformat()}")
 
-        # Load existing snapshot from DB once
-        existing_map = get_existing_contracts_by_region(region_id)  # {contract_id: ORM obj}
+        existing_map = get_existing_contracts_by_region(region_id)  # contract_id -> ORM obj
 
         seen_ids = set()
         batch = []
+        total_new = 0
+        total_updated = 0
         total_fetched = 0
-        new_count = 0
-        updated_count = 0
 
         try:
             page = 1
             while True:
-                contracts, total_pages = fetch_public_contracts(region_id, page=page)
-                logging.info(f"[{region_name}] fetched page {page}/{total_pages} with {len(contracts)} contracts")
-                total_fetched += len(contracts)
+                with ExecutionTimer("fetch_page", extra=f"{region_name} page {page}"):
+                    contracts, total_pages = fetch_public_contracts(region_id, page=page)
+
+                page_new = 0
+                page_updated = 0
+                logging.info(f"[{region_name}] fetching page {page}/{total_pages} with {len(contracts)} contracts")
 
                 for c in contracts:
                     cid = c["contract_id"]
                     seen_ids.add(cid)
                     normalized = normalize_contract_basic(c, region_id, now)
 
-                    # Determine if new or updated for logging heuristic
+                    # Check if we already have this contract
+                    changed = False
+
                     existing = existing_map.get(cid)
                     if existing is None:
-                        new_count += 1
+                        page_new += 1
+                        total_new += 1
+                        changed = True
                     else:
-                        # naive comparison: check if price or volume changed
-                        if (
-                            str(existing.price) != str(normalized["price"])
-                            or existing.volume != normalized["volume"]
-                            or existing.title != normalized["title"]
-                        ):
-                            updated_count += 1
+                        # Check for meaningful differences (you can expand this)
+                        if existing.price != normalized["price"]:
+                            changed = True
+                        if existing.volume != normalized["volume"]:
+                            changed = True
+                        if existing.title != normalized["title"]:
+                            changed = True
+                        if changed:
+                            page_updated += 1
+                            total_updated += 1
 
-                    batch.append(normalized)
+                    if changed:
+                        batch.append(normalized)
 
                     if len(batch) >= BATCH_SIZE:
-                        upsert_contracts(region_id, batch)
+                        with ExecutionTimer("upsert_batch", extra=f"{region_name} page {page} size {len(batch)}"):
+                            upsert_contracts(region_id, batch)
+
                         batch.clear()
+                        # refresh existing_map so subsequent comparisons see updated state
+                        existing_map = get_existing_contracts_by_region(region_id)
+
+                # flush remaining in page chunk
+                if batch:
+                    with ExecutionTimer("upsert_batch", extra=f"{region_name} page {page} final_flush {len(batch)}"):
+                        upsert_contracts(region_id, batch)
+
+                    batch.clear()
+                    existing_map = get_existing_contracts_by_region(region_id)
+
+                total_fetched += len(contracts)
+                logging.info(
+                    f"[{region_name}] page {page}/{total_pages}: "
+                    f"fetched={len(contracts)}, new={page_new}, updated={page_updated}"
+                )
 
                 if page >= total_pages:
                     break
                 page += 1
 
-            if batch:
-                upsert_contracts(region_id, batch)
-                batch.clear()
-
-            # Remove disappeared contracts
-            delete_missing_contracts(region_id, seen_ids)
+            # delete contracts that disappeared
+            with ExecutionTimer("delete_missing", extra=region_name):
+                delete_missing_contracts(region_id, seen_ids)
 
             logging.info(
-                f"[{region_name}] Sync done. Total fetched: {total_fetched}. "
-                f"New: {new_count}, Updated: {updated_count}, Active remaining: {len(seen_ids)}"
+                f"[{region_name}] Sync complete. Total fetched: {total_fetched}. "
+                f"New: {total_new}, Updated: {total_updated}, Active: {len(seen_ids)}"
             )
 
         except Exception as e:
