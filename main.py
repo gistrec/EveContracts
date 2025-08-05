@@ -2,8 +2,9 @@ import time
 import logging
 from datetime import datetime, timezone
 
-from api import fetch_public_contracts
+from api import fetch_public_contracts, fetch_contract_items
 from utils.metrics import ExecutionTimer
+
 from database.queries.contracts import get_existing_contracts_by_region, upsert_contracts, delete_missing_contracts
 
 
@@ -12,7 +13,7 @@ TRADE_REGIONS = {
     "Jita": 10000002,
 }
 SYNC_INTERVAL_SECONDS = 300  # full resync every 5 minutes
-BATCH_SIZE = 1000  # how many contracts to accumulate before writing
+BATCH_SIZE = 50  # how many contracts to accumulate before writing
 
 
 # helper to parse ESI’s ISO8601 with “Z”
@@ -24,6 +25,21 @@ def parse_esi_datetime(s: str) -> datetime:
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
     return datetime.fromisoformat(s)
+
+
+def basic_contract_changed(existing, normalized):
+    """
+    Compare key fields to decide if the contract was updated.
+    existing is the ORM object, normalized is the new dict.
+    """
+    if existing.title != normalized["title"]:
+        return True
+    if float(existing.price) != float(normalized["price"]):
+        return True
+    if int(existing.volume) != int(normalized["volume"]):
+        return True
+    # you can add more comparisons if needed
+    return False
 
 
 def normalize_contract_basic(contract: dict, region_id: int, now: datetime):
@@ -50,6 +66,7 @@ def normalize_contract_basic(contract: dict, region_id: int, now: datetime):
         "last_seen": now,           # datetime, not string
         # created_at/updated_at will be set by the DB defaults, so omit them here
     }
+
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -79,31 +96,34 @@ def main():
                 logging.info(f"[{region_name}] fetching page {page}/{total_pages} with {len(contracts)} contracts")
 
                 for c in contracts:
-                    cid = c["contract_id"]
-                    seen_ids.add(cid)
+                    contract_id = c["contract_id"]
+                    seen_ids.add(contract_id)
                     normalized = normalize_contract_basic(c, region_id, now)
 
                     # Check if we already have this contract
-                    changed = False
+                    refresh = False
 
-                    existing = existing_map.get(cid)
+                    existing = existing_map.get(contract_id)
                     if existing is None:
                         page_new += 1
                         total_new += 1
-                        changed = True
-                    else:
-                        # Check for meaningful differences (you can expand this)
-                        if existing.price != normalized["price"]:
-                            changed = True
-                        if existing.volume != normalized["volume"]:
-                            changed = True
-                        if existing.title != normalized["title"]:
-                            changed = True
-                        if changed:
-                            page_updated += 1
-                            total_updated += 1
+                        refresh = True  # new contract: grab items
+                    elif basic_contract_changed(existing, normalized):
+                        page_updated += 1
+                        total_updated += 1
+                        refresh = True  # updated: refresh items
 
-                    if changed:
+                    if existing and existing.items is None:
+                        refresh = True
+
+                    if refresh:
+                        try:
+                            items = fetch_contract_items(contract_id)
+                            normalized["items"] = items
+                        except Exception as e:
+                            logging.error(f"[{region_name}] Error fetching items for contract {contract_id}: {e}")
+                            normalized["items"] = []
+
                         batch.append(normalized)
 
                     if len(batch) >= BATCH_SIZE:

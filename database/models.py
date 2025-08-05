@@ -51,8 +51,7 @@ class Contract(Base):
     volume = Column(Integer,        nullable=False, comment="Volume of items in the contract")
 
     # Items in the contract
-    items        = Column(JSON, nullable=True)
-    raw_contract = Column(JSON, nullable=True)
+    items = Column(JSON, nullable=True)
 
     # Additional metadata
     last_seen  = Column(DateTime, nullable=False, server_default=func.now(), comment="Last time this contract was seen via API")

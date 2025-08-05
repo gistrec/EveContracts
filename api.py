@@ -22,7 +22,7 @@ def _safe_get(url: str, params: Optional[Dict[str, Any]] = None, max_attempts: i
     GET with simple retry/backoff policy for transient errors, 429s, and near-exhausted error-limit.
     """
     for attempt in range(1, max_attempts + 1):
-        resp = requests.get(url, params=params, headers=HEADERS, timeout=10)
+        resp = requests.get(url, params=params, headers=HEADERS, timeout=5)
         status = resp.status_code
         remain = resp.headers.get("X-ESI-Error-Limit-Remain")
 
