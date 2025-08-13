@@ -5,7 +5,12 @@ from datetime import datetime, timezone
 from api import fetch_public_contracts, fetch_contract_items
 from utils.metrics import ExecutionTimer
 
-from database.queries.contracts import get_existing_contracts_by_region, upsert_contracts, delete_missing_contracts
+from database.queries.contracts import (
+    get_existing_contracts_by_region,
+    upsert_contracts,
+    delete_missing_contracts,
+)
+from database.queries.items import upsert_items, delete_missing_items
 
 
 # Constants
@@ -127,8 +132,14 @@ def main():
                         batch.append(normalized)
 
                     if len(batch) >= BATCH_SIZE:
-                        with ExecutionTimer("upsert_batch", extra=f"{region_name} page {page} size {len(batch)}"):
+                        with ExecutionTimer(
+                            "upsert_batch", extra=f"{region_name} page {page} size {len(batch)}"
+                        ):
                             upsert_contracts(region_id, batch)
+                            items_map = {
+                                c["contract_id"]: c.get("items", []) for c in batch if "items" in c
+                            }
+                            upsert_items(region_id, items_map)
 
                         batch.clear()
                         # refresh existing_map so subsequent comparisons see updated state
@@ -136,8 +147,15 @@ def main():
 
                 # flush remaining in page chunk
                 if batch:
-                    with ExecutionTimer("upsert_batch", extra=f"{region_name} page {page} final_flush {len(batch)}"):
+                    with ExecutionTimer(
+                        "upsert_batch",
+                        extra=f"{region_name} page {page} final_flush {len(batch)}",
+                    ):
                         upsert_contracts(region_id, batch)
+                        items_map = {
+                            c["contract_id"]: c.get("items", []) for c in batch if "items" in c
+                        }
+                        upsert_items(region_id, items_map)
 
                     batch.clear()
                     existing_map = get_existing_contracts_by_region(region_id)
@@ -155,6 +173,7 @@ def main():
             # delete contracts that disappeared
             with ExecutionTimer("delete_missing", extra=region_name):
                 delete_missing_contracts(region_id, seen_ids)
+                delete_missing_items(region_id, seen_ids)
 
             logging.info(
                 f"[{region_name}] Sync complete. Total fetched: {total_fetched}. "

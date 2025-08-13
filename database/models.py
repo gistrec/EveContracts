@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, Integer, DateTime, BigInteger, \
-    Enum, Numeric, JSON, Index, func
+    Enum, Numeric, JSON, Index, func, Boolean
 from sqlalchemy.orm import declarative_base
 
 from database.enums import ContractType
@@ -62,4 +62,26 @@ class Contract(Base):
         Index("idx_expiration", "date_expired"),
         Index("idx_issuer", "issuer_id"),
         Index("idx_region_last_seen", "region_id", "last_seen"),
+    )
+
+
+class ContractItem(Base):
+    __tablename__ = "contract_items"
+
+    record_id = Column(BigInteger, primary_key=True, autoincrement=False)
+    contract_id = Column(BigInteger, nullable=False)
+    region_id = Column(BigInteger, nullable=False)
+
+    is_blueprint_copy = Column(Boolean, nullable=True)
+    is_included = Column(Boolean, nullable=False)
+
+    item_id = Column(BigInteger, nullable=True)
+    material_efficiency = Column(Integer, nullable=True)
+    quantity = Column(BigInteger, nullable=False)
+    runs = Column(Integer, nullable=True)
+    time_efficiency = Column(Integer, nullable=True)
+    type_id = Column(BigInteger, nullable=False)
+
+    __table_args__ = (
+        Index("idx_region_type", "region_id", "type_id"),
     )
